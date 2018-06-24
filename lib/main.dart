@@ -157,9 +157,7 @@ class _SpringySliderState extends State<SpringySlider> with TickerProviderStateM
             ),
           ),
           new SliderPoints(
-            sliderPercent: sliderController.state == SpringySliderState.dragging
-                ? sliderController.draggingPercent
-                : sliderPercent,
+            sliderController: sliderController,
             paddingTop: paddingTop,
             paddingBottom: paddingBottom,
           ),
@@ -616,56 +614,60 @@ class SliderClipper extends CustomClipper<Path> {
 }
 
 class SliderPoints extends StatelessWidget {
-  final double sliderPercent;
+  final SpringySliderController sliderController;
   final double paddingTop;
   final double paddingBottom;
 
   SliderPoints({
-    this.sliderPercent,
+    this.sliderController,
     this.paddingTop,
     this.paddingBottom,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.only(top: paddingTop, bottom: paddingBottom),
-      child: LayoutBuilder(
-        builder: (BuildContext context, BoxConstraints constraints) {
-          final height = constraints.maxHeight;
-          final sliderY = height * (1.0 - sliderPercent);
-          final pointsYouNeed = (100 * (1.0 - sliderPercent)).round();
-          final pointsYouHave = 100 - pointsYouNeed;
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        double sliderPercent = sliderController.sliderValue;
+        if (sliderController.state == SpringySliderState.dragging) {
+          sliderPercent = sliderController.draggingPercent.clamp(0.0, 1.0);
+        }
 
-          return Stack(
-            children: <Widget>[
-              Positioned(
-                left: 30.0,
-                top: sliderY - 50.0,
-                child: FractionalTranslation(
-                  translation: Offset(0.0, -1.0),
-                  child: new Points(
-                    points: pointsYouNeed,
-                    isAboveSlider: true,
-                    isPointsYouNeed: true,
-                    color: Theme.of(context).primaryColor,
-                  ),
-                ),
-              ),
-              Positioned(
-                left: 30.0,
-                top: sliderY + 50.0,
+        final height = constraints.maxHeight - paddingTop - paddingBottom;
+        final sliderY = height * (1.0 - sliderPercent) + paddingTop;
+        final pointsYouNeedPercent = 1.0 - sliderPercent;
+        final pointsYouNeed = (100 * pointsYouNeedPercent).round();
+        final pointsYouHavePercent = sliderPercent;
+        final pointsYouHave = 100 - pointsYouNeed;
+
+        return Stack(
+          children: <Widget>[
+            Positioned(
+              left: 30.0,
+              top: sliderY - 10.0 - (40.0 * pointsYouNeedPercent),
+              child: FractionalTranslation(
+                translation: Offset(0.0, -1.0),
                 child: new Points(
-                  points: pointsYouHave,
-                  isAboveSlider: false,
-                  isPointsYouNeed: false,
-                  color: Theme.of(context).scaffoldBackgroundColor,
+                  points: pointsYouNeed,
+                  isAboveSlider: true,
+                  isPointsYouNeed: true,
+                  color: Theme.of(context).primaryColor,
                 ),
               ),
-            ],
-          );
-        },
-      ),
+            ),
+            Positioned(
+              left: 30.0,
+              top: sliderY + 10.0 + (40.0 * pointsYouHavePercent),
+              child: new Points(
+                points: pointsYouHave,
+                isAboveSlider: false,
+                isPointsYouNeed: false,
+                color: Theme.of(context).scaffoldBackgroundColor,
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -686,13 +688,13 @@ class Points extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final percent = points / 100.0;
-    final pointTextSize = 30.0 + (70.0 * percent);
+    final pointTextSize = 50.0 + (50.0 * percent);
 
     return Row(
       crossAxisAlignment: isAboveSlider ? CrossAxisAlignment.end : CrossAxisAlignment.start,
       children: <Widget>[
         FractionalTranslation(
-          translation: Offset(0.0, isAboveSlider ? 0.18 : -0.18),
+          translation: Offset(-0.05 * percent, isAboveSlider ? 0.18 : -0.18),
           child: Text(
             '$points',
             style: TextStyle(
