@@ -163,13 +163,13 @@ class _SpringySliderState extends State<SpringySlider> with TickerProviderStateM
             paddingTop: paddingTop,
             paddingBottom: paddingBottom,
           ),
-          new SliderDebug(
-            sliderPercent: sliderController.state == SpringySliderState.dragging
-                ? sliderController.draggingPercent
-                : sliderPercent,
-            paddingTop: paddingTop,
-            paddingBottom: paddingBottom,
-          ),
+//          new SliderDebug(
+//            sliderPercent: sliderController.state == SpringySliderState.dragging
+//                ? sliderController.draggingPercent
+//                : sliderPercent,
+//            paddingTop: paddingTop,
+//            paddingBottom: paddingBottom,
+//          ),
         ],
       ),
     );
@@ -518,23 +518,70 @@ class SliderClipper extends CustomClipper<Path> {
   }
 
   Path _clipSpringing(Size size) {
-    Path rect = new Path();
+    Path compositePath = new Path();
 
     final top = paddingTop;
-    final bottom = size.height;
-    final height = (bottom - paddingBottom) - top;
-    final percentFromBottom = 1.0 - sliderController.springingPercent;
+    final bottom = size.height - paddingBottom;
+    final height = bottom - top;
+    final basePercentFromBottom = 1.0 - sliderController.springingPercent;
+    final crestSpringPercentFromBottom = 1.0 - sliderController.crestSpringingPercent;
 
-    rect.addRect(
-      new Rect.fromLTRB(
-        0.0,
-        top + (percentFromBottom * height),
-        size.width,
-        bottom,
-      ),
+    final baseY = top + (basePercentFromBottom * height);
+    final leftX = -0.15 * size.width;
+    final leftPoint = Point(leftX, baseY);
+    final rightX = 1.15 * size.width;
+    final rightPoint = Point(rightX, baseY);
+
+    final crestY = top + (crestSpringPercentFromBottom * height);
+    final crestPoint = Point(size.width / 2, crestY.clamp(top, bottom));
+
+    double excessDrag = 0.0;
+    if (sliderController.springingPercent < 0.0) {
+      excessDrag = sliderController.springingPercent;
+    } else if (sliderController.springingPercent > 1.0) {
+      excessDrag = sliderController.springingPercent - 1.0;
+    }
+    final baseControlPointWidth = 150.0;
+    final thickeningFactor = excessDrag * height * 0.05;
+    final controlPointWidth = (200.0 * thickeningFactor).abs() + baseControlPointWidth;
+
+    final rect = new Path();
+    rect.moveTo(leftPoint.x, leftPoint.y);
+    rect.lineTo(rightPoint.x, rightPoint.y);
+    rect.lineTo(rightPoint.x, size.height);
+    rect.lineTo(leftPoint.x, size.height);
+    rect.lineTo(leftPoint.x, leftPoint.y);
+    rect.close();
+
+    compositePath.addPath(rect, const Offset(0.0, 0.0));
+
+    final curve = new Path();
+    curve.moveTo(crestPoint.x, crestPoint.y);
+    curve.quadraticBezierTo(
+      crestPoint.x - controlPointWidth,
+      crestPoint.y,
+      leftPoint.x,
+      leftPoint.y,
     );
 
-    return rect;
+    curve.moveTo(crestPoint.x, crestPoint.y);
+    curve.quadraticBezierTo(
+      crestPoint.x + controlPointWidth,
+      crestPoint.y,
+      rightPoint.x,
+      rightPoint.y,
+    );
+
+    curve.lineTo(leftPoint.x, leftPoint.y);
+    curve.close();
+
+    if (crestSpringPercentFromBottom > basePercentFromBottom) {
+      compositePath.fillType = PathFillType.evenOdd;
+    }
+
+    compositePath.addPath(curve, const Offset(0.0, 0.0));
+
+    return compositePath;
   }
 
   @override
@@ -667,6 +714,12 @@ class SpringySliderController extends ChangeNotifier {
     damping: 30.0,
   );
 
+  final SpringDescription crestSpring = new SpringDescription(
+    mass: 1.0,
+    stiffness: 10.0,
+    damping: 1.0,
+  );
+
   final TickerProvider _vsync;
 
   SpringySliderState _state = SpringySliderState.idle;
@@ -688,6 +741,12 @@ class SpringySliderController extends ChangeNotifier {
   double _springingPercent;
   // Physics spring.
   SpringSimulation _sliderSpringSimulation;
+
+  double _crestSpringingPercent;
+  double _crestSpringingStartPercent;
+  double _crestSpringingEndPercent;
+  SpringSimulation _crestSpringSimulation;
+
   // Ticker that computes current spring position based on time.
   Ticker _springTicker;
   // Elapsed time that has passed since the start of the spring.
@@ -747,6 +806,10 @@ class SpringySliderController extends ChangeNotifier {
     _springStartPercent = _sliderPercent;
     _springEndPercent = _draggingPercent.clamp(0.0, 1.0);
 
+    _crestSpringingPercent = draggingPercent;
+    _crestSpringingStartPercent = draggingPercent;
+    _crestSpringingEndPercent = _springStartPercent;
+
     _draggingPercent = null;
 
     _sliderPercent = _springEndPercent;
@@ -757,6 +820,12 @@ class SpringySliderController extends ChangeNotifier {
   }
 
   void _startSpringing() {
+    if (_springStartPercent == _springEndPercent) {
+      _state = SpringySliderState.idle;
+      notifyListeners();
+      return;
+    }
+
     _sliderSpringSimulation = new SpringSimulation(
       sliderSpring,
       _springStartPercent,
@@ -764,16 +833,38 @@ class SpringySliderController extends ChangeNotifier {
       0.0,
     );
 
+    final crestSpringNormal = (_crestSpringingEndPercent - _crestSpringingStartPercent) /
+        (_crestSpringingEndPercent - _crestSpringingStartPercent).abs();
+    _crestSpringSimulation = new SpringSimulation(
+      crestSpring,
+      _crestSpringingStartPercent,
+      _crestSpringingEndPercent,
+      0.5 * crestSpringNormal,
+    );
+
     _springTime = 0.0;
 
     _springTicker = _vsync.createTicker(_springTick)..start();
+
+    notifyListeners();
   }
 
   void _springTick(Duration deltaTime) {
-    _springTime += deltaTime.inMilliseconds.toDouble() / 1000.0;
+    final lastFrameTime = deltaTime.inMilliseconds.toDouble() / 1000.0;
+
+    _springTime += lastFrameTime;
     _springingPercent = _sliderSpringSimulation.x(_springTime);
 
-    if (_sliderSpringSimulation.isDone(_springTime)) {
+    _crestSpringingPercent = _crestSpringSimulation.x(lastFrameTime);
+    _crestSpringSimulation = new SpringSimulation(
+      crestSpring,
+      _crestSpringingPercent,
+      _springingPercent,
+      _crestSpringSimulation.dx(lastFrameTime),
+    );
+
+    if (_sliderSpringSimulation.isDone(_springTime) &&
+        _crestSpringSimulation.isDone(lastFrameTime)) {
       _springTicker
         ..stop()
         ..dispose();
@@ -787,10 +878,7 @@ class SpringySliderController extends ChangeNotifier {
 
   double get springingPercent => _springingPercent;
 
-  set springingPercent(double newValue) {
-    _springingPercent = newValue;
-    notifyListeners();
-  }
+  double get crestSpringingPercent => _crestSpringingPercent;
 }
 
 enum SpringySliderState {
