@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -144,7 +145,7 @@ class _SpringySliderState extends State<SpringySlider> with TickerProviderStateM
             paddingBottom: paddingBottom,
           ),
           SliderGoo(
-            sliderPercent: sliderPercent,
+            sliderController: sliderController,
             paddingTop: paddingTop,
             paddingBottom: paddingBottom,
             child: SliderMarks(
@@ -235,7 +236,12 @@ class _SliderDraggerState extends State<SliderDragger> {
     startDragY = details.globalPosition.dy;
     startDragPercent = widget.sliderController.sliderValue;
 
-    widget.sliderController.onDragStart();
+    final sliderWidth = context.size.width;
+    final sliderLeftPosition =
+        (context.findRenderObject() as RenderBox).localToGlobal(const Offset(0.0, 0.0)).dx;
+    final dragHorizontalPercent = (details.globalPosition.dx - sliderLeftPosition) / sliderWidth;
+
+    widget.sliderController.onDragStart(dragHorizontalPercent);
   }
 
   void _onPanUpdate(DragUpdateDetails details) {
@@ -243,7 +249,15 @@ class _SliderDraggerState extends State<SliderDragger> {
     final sliderHeight = context.size.height - widget.paddingTop - widget.paddingBottom;
     final dragPercent = dragDistance / sliderHeight;
 
-    widget.sliderController.draggingPercent = startDragPercent + dragPercent;
+    final sliderWidth = context.size.width;
+    final sliderLeftPosition =
+        (context.findRenderObject() as RenderBox).localToGlobal(const Offset(0.0, 0.0)).dx;
+    final dragHorizontalPercent = (details.globalPosition.dx - sliderLeftPosition) / sliderWidth;
+
+    widget.sliderController.draggingPercents = new Offset(
+      dragHorizontalPercent,
+      startDragPercent + dragPercent,
+    );
   }
 
   void _onPanEnd(DragEndDetails details) {
@@ -265,13 +279,13 @@ class _SliderDraggerState extends State<SliderDragger> {
 }
 
 class SliderGoo extends StatelessWidget {
-  final double sliderPercent;
+  final SpringySliderController sliderController;
   final double paddingTop;
   final double paddingBottom;
   final Widget child;
 
   SliderGoo({
-    this.sliderPercent,
+    this.sliderController,
     this.paddingTop,
     this.paddingBottom,
     this.child,
@@ -281,7 +295,7 @@ class SliderGoo extends StatelessWidget {
   Widget build(BuildContext context) {
     return ClipPath(
       clipper: SliderClipper(
-        sliderPercent: sliderPercent,
+        sliderController: sliderController,
         paddingTop: paddingTop,
         paddingBottom: paddingBottom,
       ),
@@ -393,24 +407,123 @@ class SliderMarksPainter extends CustomPainter {
 }
 
 class SliderClipper extends CustomClipper<Path> {
-  final double sliderPercent;
+  final SpringySliderController sliderController;
   final double paddingTop;
   final double paddingBottom;
 
   SliderClipper({
-    this.sliderPercent,
+    this.sliderController,
     this.paddingTop,
     this.paddingBottom,
   });
 
   @override
   Path getClip(Size size) {
+    switch (sliderController.state) {
+      case SpringySliderState.idle:
+        return _clipIdle(size);
+      case SpringySliderState.dragging:
+        return _clipDragging(size);
+      case SpringySliderState.springing:
+        return _clipSpringing(size);
+    }
+  }
+
+  Path _clipIdle(Size size) {
     Path rect = new Path();
 
     final top = paddingTop;
     final bottom = size.height;
     final height = (bottom - paddingBottom) - top;
-    final percentFromBottom = 1.0 - sliderPercent;
+    final percentFromBottom = 1.0 - sliderController.sliderValue;
+
+    rect.addRect(
+      new Rect.fromLTRB(
+        0.0,
+        top + (percentFromBottom * height),
+        size.width,
+        bottom,
+      ),
+    );
+
+    return rect;
+  }
+
+  Path _clipDragging(Size size) {
+    Path compositePath = new Path();
+
+    final top = paddingTop;
+    final bottom = size.height - paddingBottom;
+    final height = bottom - top;
+    final basePercentFromBottom = 1.0 - sliderController.sliderValue;
+    final dragPercentFromBottom = 1.0 - sliderController.draggingPercent;
+
+    final baseY = top + (basePercentFromBottom * height);
+    final leftX = -0.15 * size.width;
+    final leftPoint = Point(leftX, baseY);
+    final rightX = 1.15 * size.width;
+    final rightPoint = Point(rightX, baseY);
+
+    final dragX = sliderController.draggingHorizontalPercent * size.width;
+    final dragY = top + (dragPercentFromBottom * height);
+    final crestPoint = Point(dragX, dragY.clamp(top, bottom));
+
+    double excessDrag = 0.0;
+    if (sliderController.draggingPercent < 0.0) {
+      excessDrag = sliderController.draggingPercent;
+    } else if (sliderController.draggingPercent > 1.0) {
+      excessDrag = sliderController.draggingPercent - 1.0;
+    }
+    final baseControlPointWidth = 150.0;
+    final thickeningFactor = excessDrag * height * 0.05;
+    final controlPointWidth = (200.0 * thickeningFactor).abs() + baseControlPointWidth;
+
+    final rect = new Path();
+    rect.moveTo(leftPoint.x, leftPoint.y);
+    rect.lineTo(rightPoint.x, rightPoint.y);
+    rect.lineTo(rightPoint.x, size.height);
+    rect.lineTo(leftPoint.x, size.height);
+    rect.lineTo(leftPoint.x, leftPoint.y);
+    rect.close();
+
+    compositePath.addPath(rect, const Offset(0.0, 0.0));
+
+    final curve = new Path();
+    curve.moveTo(crestPoint.x, crestPoint.y);
+    curve.quadraticBezierTo(
+      crestPoint.x - controlPointWidth,
+      crestPoint.y,
+      leftPoint.x,
+      leftPoint.y,
+    );
+
+    curve.moveTo(crestPoint.x, crestPoint.y);
+    curve.quadraticBezierTo(
+      crestPoint.x + controlPointWidth,
+      crestPoint.y,
+      rightPoint.x,
+      rightPoint.y,
+    );
+
+    curve.lineTo(leftPoint.x, leftPoint.y);
+    curve.close();
+
+    if (dragPercentFromBottom > basePercentFromBottom) {
+      compositePath.fillType = PathFillType.evenOdd;
+    }
+
+    compositePath.addPath(curve, const Offset(0.0, 0.0));
+
+    return compositePath;
+  }
+
+  Path _clipSpringing(Size size) {
+    Path rect = new Path();
+
+    final top = paddingTop;
+    final bottom = size.height;
+    final height = (bottom - paddingBottom) - top;
+    final percentFromBottom = 1.0 - sliderController.springingPercent;
 
     rect.addRect(
       new Rect.fromLTRB(
@@ -564,6 +677,9 @@ class SpringySliderController extends ChangeNotifier {
   // Slider value during user drag.
   double _draggingPercent;
 
+  // Slider horizontal value during user drag.
+  double _draggingHorizontalPercent;
+
   // When springing to new slider value, this is where the UI is springing from.
   double _springStartPercent;
   // When springing to new slider value, this is where the UI is springing to.
@@ -602,12 +718,15 @@ class SpringySliderController extends ChangeNotifier {
 
   double get draggingPercent => _draggingPercent;
 
-  set draggingPercent(double newValue) {
-    _draggingPercent = newValue;
+  double get draggingHorizontalPercent => _draggingHorizontalPercent;
+
+  set draggingPercents(Offset draggingPercents) {
+    _draggingHorizontalPercent = draggingPercents.dx;
+    _draggingPercent = draggingPercents.dy;
     notifyListeners();
   }
 
-  void onDragStart() {
+  void onDragStart(double draggingHorizontalPercent) {
     if (_springTicker != null) {
       _springTicker
         ..stop()
@@ -616,6 +735,7 @@ class SpringySliderController extends ChangeNotifier {
 
     _state = SpringySliderState.dragging;
     _draggingPercent = _sliderPercent;
+    _draggingHorizontalPercent = draggingHorizontalPercent;
 
     notifyListeners();
   }
