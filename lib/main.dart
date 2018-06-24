@@ -1,6 +1,8 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/physics.dart';
+import 'package:flutter/scheduler.dart';
 
 void main() => runApp(new MyApp());
 
@@ -104,34 +106,151 @@ class SpringySlider extends StatefulWidget {
   _SpringySliderState createState() => new _SpringySliderState();
 }
 
-class _SpringySliderState extends State<SpringySlider> {
+class _SpringySliderState extends State<SpringySlider> with TickerProviderStateMixin {
   final double paddingTop = 50.0;
   final double paddingBottom = 50.0;
 
-  double sliderPercent = 0.50;
+  SpringySliderController sliderController;
+
+  @override
+  void initState() {
+    super.initState();
+    sliderController = new SpringySliderController(
+      sliderPercent: 0.5,
+      vsync: this,
+    )..addListener(() {
+        setState(() {});
+      });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    double sliderPercent = sliderController.sliderValue;
+    if (sliderController.state == SpringySliderState.springing) {
+      sliderPercent = sliderController.springingPercent;
+    }
+
+    return SliderDragger(
+      sliderController: sliderController,
+      paddingTop: paddingTop,
+      paddingBottom: paddingBottom,
+      child: Stack(
+        children: <Widget>[
+          SliderMarks(
+            markCount: widget.markCount,
+            markColor: widget.positiveColor,
+            backgroundColor: widget.negativeColor,
+            paddingTop: paddingTop,
+            paddingBottom: paddingBottom,
+          ),
+          SliderGoo(
+            sliderPercent: sliderPercent,
+            paddingTop: paddingTop,
+            paddingBottom: paddingBottom,
+            child: SliderMarks(
+              markCount: widget.markCount,
+              markColor: widget.negativeColor,
+              backgroundColor: widget.positiveColor,
+              paddingTop: paddingTop,
+              paddingBottom: paddingBottom,
+            ),
+          ),
+          new SliderPoints(
+            sliderPercent: sliderController.state == SpringySliderState.dragging
+                ? sliderController.draggingPercent
+                : sliderPercent,
+            paddingTop: paddingTop,
+            paddingBottom: paddingBottom,
+          ),
+          new SliderDebug(
+            sliderPercent: sliderController.state == SpringySliderState.dragging
+                ? sliderController.draggingPercent
+                : sliderPercent,
+            paddingTop: paddingTop,
+            paddingBottom: paddingBottom,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class SliderDebug extends StatelessWidget {
+  final double sliderPercent;
+  final double paddingTop;
+  final double paddingBottom;
+
+  SliderDebug({
+    this.sliderPercent,
+    this.paddingTop,
+    this.paddingBottom,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final height = constraints.maxHeight - paddingTop - paddingBottom;
+
+        return Stack(
+          children: <Widget>[
+            Positioned(
+              left: 0.0,
+              right: 0.0,
+              top: height * (1.0 - sliderPercent) + paddingTop,
+              child: Container(
+                height: 2.0,
+                color: Colors.black,
+              ),
+            )
+          ],
+        );
+      },
+    );
+  }
+}
+
+class SliderDragger extends StatefulWidget {
+  final SpringySliderController sliderController;
+  final double paddingTop;
+  final double paddingBottom;
+  final Widget child;
+
+  SliderDragger({
+    this.sliderController,
+    this.paddingTop,
+    this.paddingBottom,
+    this.child,
+  });
+
+  @override
+  _SliderDraggerState createState() => _SliderDraggerState();
+}
+
+class _SliderDraggerState extends State<SliderDragger> {
   double startDragY;
   double startDragPercent;
 
   void _onPanStart(DragStartDetails details) {
     startDragY = details.globalPosition.dy;
-    startDragPercent = sliderPercent;
+    startDragPercent = widget.sliderController.sliderValue;
+
+    widget.sliderController.onDragStart();
   }
 
   void _onPanUpdate(DragUpdateDetails details) {
     final dragDistance = startDragY - details.globalPosition.dy;
-    final sliderHeight = context.size.height;
+    final sliderHeight = context.size.height - widget.paddingTop - widget.paddingBottom;
     final dragPercent = dragDistance / sliderHeight;
 
-    setState(() {
-      sliderPercent = startDragPercent + dragPercent;
-    });
+    widget.sliderController.draggingPercent = startDragPercent + dragPercent;
   }
 
   void _onPanEnd(DragEndDetails details) {
-    setState(() {
-      startDragY = null;
-      startDragPercent = null;
-    });
+    startDragY = null;
+    startDragPercent = null;
+
+    widget.sliderController.onDragEnd();
   }
 
   @override
@@ -140,88 +259,48 @@ class _SpringySliderState extends State<SpringySlider> {
       onPanStart: _onPanStart,
       onPanUpdate: _onPanUpdate,
       onPanEnd: _onPanEnd,
-      child: Stack(
-        children: <Widget>[
-          SliderMarks(
-            markCount: widget.markCount,
-            color: widget.positiveColor,
-            paddingTop: paddingTop,
-            paddingBottom: paddingBottom,
-          ),
-          ClipPath(
-            clipper: SliderClipper(
-              sliderPercent: sliderPercent,
-              paddingTop: paddingTop,
-              paddingBottom: paddingBottom,
-            ),
-            child: Stack(
-              children: <Widget>[
-                Container(
-                  color: widget.positiveColor,
-                ),
-                SliderMarks(
-                  markCount: widget.markCount,
-                  color: widget.negativeColor,
-                  paddingTop: paddingTop,
-                  paddingBottom: paddingBottom,
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: EdgeInsets.only(top: paddingTop, bottom: paddingBottom),
-            child: LayoutBuilder(
-              builder: (BuildContext context, BoxConstraints constraints) {
-                final height = constraints.maxHeight;
-                final sliderY = height * (1.0 - sliderPercent);
-                final pointsYouNeed = (100 * (1.0 - sliderPercent)).round();
-                final pointsYouHave = 100 - pointsYouNeed;
+      child: widget.child,
+    );
+  }
+}
 
-                return Stack(
-                  children: <Widget>[
-                    Positioned(
-                      left: 30.0,
-                      top: sliderY - 50.0,
-                      child: FractionalTranslation(
-                        translation: Offset(0.0, -1.0),
-                        child: new Points(
-                          points: pointsYouNeed,
-                          isAboveSlider: true,
-                          isPointsYouNeed: true,
-                          color: Theme.of(context).primaryColor,
-                        ),
-                      ),
-                    ),
-                    Positioned(
-                      left: 30.0,
-                      top: sliderY + 50.0,
-                      child: new Points(
-                        points: pointsYouHave,
-                        isAboveSlider: false,
-                        isPointsYouNeed: false,
-                        color: Theme.of(context).scaffoldBackgroundColor,
-                      ),
-                    ),
-                  ],
-                );
-              },
-            ),
-          )
-        ],
+class SliderGoo extends StatelessWidget {
+  final double sliderPercent;
+  final double paddingTop;
+  final double paddingBottom;
+  final Widget child;
+
+  SliderGoo({
+    this.sliderPercent,
+    this.paddingTop,
+    this.paddingBottom,
+    this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipPath(
+      clipper: SliderClipper(
+        sliderPercent: sliderPercent,
+        paddingTop: paddingTop,
+        paddingBottom: paddingBottom,
       ),
+      child: child,
     );
   }
 }
 
 class SliderMarks extends StatelessWidget {
   final int markCount;
-  final Color color;
+  final Color markColor;
+  final Color backgroundColor;
   final double paddingTop;
   final double paddingBottom;
 
   SliderMarks({
     this.markCount,
-    this.color,
+    this.markColor,
+    this.backgroundColor,
     this.paddingTop,
     this.paddingBottom,
   });
@@ -231,7 +310,8 @@ class SliderMarks extends StatelessWidget {
     return CustomPaint(
       painter: new SliderMarksPainter(
         markCount: markCount,
-        color: color,
+        markColor: markColor,
+        backgroundColor: backgroundColor,
         markThickness: 2.0,
         paddingTop: paddingTop,
         paddingBottom: paddingBottom,
@@ -247,28 +327,44 @@ class SliderMarksPainter extends CustomPainter {
   final double smallMarkWidth = 10.0;
 
   final int markCount;
-  final Color color;
+  final Color markColor;
+  final Color backgroundColor;
   final double markThickness;
   final double paddingTop;
   final double paddingBottom;
   final double paddingRight;
   final Paint markPaint;
+  final Paint backgroundPaint;
 
   SliderMarksPainter({
     this.markCount,
-    this.color,
+    this.markColor,
+    this.backgroundColor,
     this.markThickness,
     this.paddingTop,
     this.paddingBottom,
     this.paddingRight,
-  }) : markPaint = new Paint()
-          ..color = color
+  })  : markPaint = new Paint()
+          ..color = markColor
           ..strokeWidth = markThickness
           ..style = PaintingStyle.stroke
-          ..strokeCap = StrokeCap.round;
+          ..strokeCap = StrokeCap.round,
+        backgroundPaint = new Paint()
+          ..color = backgroundColor
+          ..style = PaintingStyle.fill;
 
   @override
   void paint(Canvas canvas, Size size) {
+    canvas.drawRect(
+      Rect.fromLTWH(
+        0.0,
+        0.0,
+        size.width,
+        size.height,
+      ),
+      backgroundPaint,
+    );
+
     final paintHeight = size.height - paddingTop - paddingBottom;
     final gap = paintHeight / (markCount - 1);
 
@@ -334,6 +430,61 @@ class SliderClipper extends CustomClipper<Path> {
   }
 }
 
+class SliderPoints extends StatelessWidget {
+  final double sliderPercent;
+  final double paddingTop;
+  final double paddingBottom;
+
+  SliderPoints({
+    this.sliderPercent,
+    this.paddingTop,
+    this.paddingBottom,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(top: paddingTop, bottom: paddingBottom),
+      child: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          final height = constraints.maxHeight;
+          final sliderY = height * (1.0 - sliderPercent);
+          final pointsYouNeed = (100 * (1.0 - sliderPercent)).round();
+          final pointsYouHave = 100 - pointsYouNeed;
+
+          return Stack(
+            children: <Widget>[
+              Positioned(
+                left: 30.0,
+                top: sliderY - 50.0,
+                child: FractionalTranslation(
+                  translation: Offset(0.0, -1.0),
+                  child: new Points(
+                    points: pointsYouNeed,
+                    isAboveSlider: true,
+                    isPointsYouNeed: true,
+                    color: Theme.of(context).primaryColor,
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 30.0,
+                top: sliderY + 50.0,
+                child: new Points(
+                  points: pointsYouHave,
+                  isAboveSlider: false,
+                  isPointsYouNeed: false,
+                  color: Theme.of(context).scaffoldBackgroundColor,
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
 class Points extends StatelessWidget {
   final int points;
   final bool isAboveSlider;
@@ -394,4 +545,136 @@ class Points extends StatelessWidget {
       ],
     );
   }
+}
+
+class SpringySliderController extends ChangeNotifier {
+  final SpringDescription sliderSpring = new SpringDescription(
+    mass: 1.0,
+    stiffness: 1000.0,
+    damping: 30.0,
+  );
+
+  final TickerProvider _vsync;
+
+  SpringySliderState _state = SpringySliderState.idle;
+
+  // Stable slider value.
+  double _sliderPercent;
+
+  // Slider value during user drag.
+  double _draggingPercent;
+
+  // When springing to new slider value, this is where the UI is springing from.
+  double _springStartPercent;
+  // When springing to new slider value, this is where the UI is springing to.
+  double _springEndPercent;
+  // Current slider value during spring effect.
+  double _springingPercent;
+  // Physics spring.
+  SpringSimulation _sliderSpringSimulation;
+  // Ticker that computes current spring position based on time.
+  Ticker _springTicker;
+  // Elapsed time that has passed since the start of the spring.
+  double _springTime;
+
+  SpringySliderController({
+    double sliderPercent = 0.0,
+    vsync,
+  })  : _vsync = vsync,
+        _sliderPercent = sliderPercent;
+
+  void dispose() {
+    if (_springTicker != null) {
+      _springTicker.dispose();
+    }
+
+    super.dispose();
+  }
+
+  SpringySliderState get state => _state;
+
+  double get sliderValue => _sliderPercent;
+
+  set sliderValue(double newValue) {
+    _sliderPercent = newValue;
+    notifyListeners();
+  }
+
+  double get draggingPercent => _draggingPercent;
+
+  set draggingPercent(double newValue) {
+    _draggingPercent = newValue;
+    notifyListeners();
+  }
+
+  void onDragStart() {
+    if (_springTicker != null) {
+      _springTicker
+        ..stop()
+        ..dispose();
+    }
+
+    _state = SpringySliderState.dragging;
+    _draggingPercent = _sliderPercent;
+
+    notifyListeners();
+  }
+
+  void onDragEnd() {
+    _state = SpringySliderState.springing;
+
+    _springingPercent = _sliderPercent;
+    _springStartPercent = _sliderPercent;
+    _springEndPercent = _draggingPercent.clamp(0.0, 1.0);
+
+    _draggingPercent = null;
+
+    _sliderPercent = _springEndPercent;
+
+    _startSpringing();
+
+    notifyListeners();
+  }
+
+  void _startSpringing() {
+    _sliderSpringSimulation = new SpringSimulation(
+      sliderSpring,
+      _springStartPercent,
+      _springEndPercent,
+      0.0,
+    );
+
+    _springTime = 0.0;
+
+    _springTicker = _vsync.createTicker(_springTick)..start();
+  }
+
+  void _springTick(Duration deltaTime) {
+    _springTime += deltaTime.inMilliseconds.toDouble() / 1000.0;
+    _springingPercent = _sliderSpringSimulation.x(_springTime);
+
+    if (_sliderSpringSimulation.isDone(_springTime)) {
+      _springTicker
+        ..stop()
+        ..dispose();
+      _springTicker = null;
+
+      _state = SpringySliderState.idle;
+    }
+
+    notifyListeners();
+  }
+
+  double get springingPercent => _springingPercent;
+
+  set springingPercent(double newValue) {
+    _springingPercent = newValue;
+    notifyListeners();
+  }
+}
+
+enum SpringySliderState {
+  idle,
+  dragging,
+  springing,
 }
