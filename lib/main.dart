@@ -527,23 +527,22 @@ class SliderClipper extends CustomClipper<Path> {
     final crestSpringPercentFromBottom = 1.0 - sliderController.crestSpringingPercent;
 
     final baseY = top + (basePercentFromBottom * height);
-    final leftX = -0.15 * size.width;
+    final leftX = -0.85 * size.width;
     final leftPoint = Point(leftX, baseY);
+
+    final centerX = 0.15 * size.width;
+    final centerPoint = Point(centerX, baseY);
+
     final rightX = 1.15 * size.width;
     final rightPoint = Point(rightX, baseY);
 
     final crestY = top + (crestSpringPercentFromBottom * height);
-    final crestPoint = Point(size.width / 2, crestY.clamp(top, bottom));
+    final crestPoint = Point((rightX - centerX) / 2 + centerX, crestY);
 
-    double excessDrag = 0.0;
-    if (sliderController.springingPercent < 0.0) {
-      excessDrag = sliderController.springingPercent;
-    } else if (sliderController.springingPercent > 1.0) {
-      excessDrag = sliderController.springingPercent - 1.0;
-    }
-    final baseControlPointWidth = 150.0;
-    final thickeningFactor = excessDrag * height * 0.05;
-    final controlPointWidth = (200.0 * thickeningFactor).abs() + baseControlPointWidth;
+    final troughY = baseY + (baseY - crestY);
+    final troughPoint = Point((centerX - leftX) / 2 + leftX, troughY);
+
+    final controlPointWidth = 100.0;
 
     final rect = new Path();
     rect.moveTo(leftPoint.x, leftPoint.y);
@@ -555,31 +554,57 @@ class SliderClipper extends CustomClipper<Path> {
 
     compositePath.addPath(rect, const Offset(0.0, 0.0));
 
-    final curve = new Path();
-    curve.moveTo(crestPoint.x, crestPoint.y);
-    curve.quadraticBezierTo(
-      crestPoint.x - controlPointWidth,
-      crestPoint.y,
+    final leftCurve = new Path();
+    leftCurve.moveTo(troughPoint.x, troughPoint.y);
+    leftCurve.quadraticBezierTo(
+      troughPoint.x - controlPointWidth,
+      troughPoint.y,
       leftPoint.x,
       leftPoint.y,
     );
 
-    curve.moveTo(crestPoint.x, crestPoint.y);
-    curve.quadraticBezierTo(
+    leftCurve.moveTo(troughPoint.x, troughPoint.y);
+    leftCurve.quadraticBezierTo(
+      troughPoint.x + controlPointWidth,
+      troughPoint.y,
+      centerPoint.x,
+      centerPoint.y,
+    );
+
+    leftCurve.lineTo(leftPoint.x, leftPoint.y);
+    leftCurve.close();
+
+    if (crestSpringPercentFromBottom < basePercentFromBottom) {
+      compositePath.fillType = PathFillType.evenOdd;
+    }
+
+    compositePath.addPath(leftCurve, const Offset(0.0, 0.0));
+
+    final rightCurve = new Path();
+    rightCurve.moveTo(crestPoint.x, crestPoint.y);
+    rightCurve.quadraticBezierTo(
+      crestPoint.x - controlPointWidth,
+      crestPoint.y,
+      centerPoint.x,
+      centerPoint.y,
+    );
+
+    rightCurve.moveTo(crestPoint.x, crestPoint.y);
+    rightCurve.quadraticBezierTo(
       crestPoint.x + controlPointWidth,
       crestPoint.y,
       rightPoint.x,
       rightPoint.y,
     );
 
-    curve.lineTo(leftPoint.x, leftPoint.y);
-    curve.close();
+    rightCurve.lineTo(centerPoint.x, centerPoint.y);
+    rightCurve.close();
 
     if (crestSpringPercentFromBottom > basePercentFromBottom) {
       compositePath.fillType = PathFillType.evenOdd;
     }
 
-    compositePath.addPath(curve, const Offset(0.0, 0.0));
+    compositePath.addPath(rightCurve, const Offset(0.0, 0.0));
 
     return compositePath;
   }
@@ -716,8 +741,8 @@ class SpringySliderController extends ChangeNotifier {
 
   final SpringDescription crestSpring = new SpringDescription(
     mass: 1.0,
-    stiffness: 10.0,
-    damping: 1.0,
+    stiffness: 5.0,
+    damping: 0.5,
   );
 
   final TickerProvider _vsync;
